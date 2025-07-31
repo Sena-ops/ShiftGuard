@@ -8,15 +8,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var recursive bool
+
 var scanCmd = &cobra.Command{
 	Use:   "scan [caminho]",
 	Short: "Escaneia um diretório em busca de arquivos IaC",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		path := args[0]
-		fmt.Printf("🔍 Escaneando diretório: %s\n\n", path)
+		fmt.Printf("🔍 Escaneando diretório: %s (recursivo: %v)\n\n", path, recursive)
 
-		files, err := parser.DetectIaCFiles(path)
+		files, err := parser.DetectIaCFiles(path, recursive)
 		if err != nil {
 			fmt.Println("Erro ao escanear:", err)
 			os.Exit(1)
@@ -39,5 +41,6 @@ var scanCmd = &cobra.Command{
 }
 
 func init() {
+	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
 	rootCmd.AddCommand(scanCmd)
 }

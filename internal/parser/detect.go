@@ -27,19 +27,19 @@ func IsKubernetesManifest(path string) bool {
 }
 
 // DetectIaCFiles percorre o diretório informado e retorna uma lista de arquivos IaC classificados.
-func DetectIaCFiles(rootPath string) ([]IaCFile, error) {
+func DetectIaCFiles(rootPath string, recursive bool) ([]IaCFile, error) {
 	var files []IaCFile
 
-	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if info.IsDir() {
-			return nil
+		if d.IsDir() && path != rootPath && !recursive {
+			return filepath.SkipDir
 		}
 
-		name := strings.ToLower(info.Name())
+		name := strings.ToLower(d.Name())
 
 		switch {
 		case strings.HasSuffix(name, ".tf"):
