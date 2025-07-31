@@ -51,8 +51,8 @@ var scanCmd = &cobra.Command{
 			iacResults[iacType] = append(iacResults[iacType], f.Path)
 		}
 
-		// Verifica formato de saída
-		if strings.ToLower(outputFormat) == "json" {
+		switch strings.ToLower(outputFormat) {
+		case "json":
 			var jsonResults []ScanResult
 			for iacType, paths := range iacResults {
 				jsonResults = append(jsonResults, ScanResult{
@@ -69,14 +69,29 @@ var scanCmd = &cobra.Command{
 
 			fmt.Println(string(encoded))
 			return
-		}
 
-		// Saída padrão no terminal
-		fmt.Println("✅ Resultado do Scan:")
-		for iacType, paths := range iacResults {
-			fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
-			for _, p := range paths {
-				fmt.Printf("    • %s\n", p)
+		case "markdown":
+			var builder strings.Builder
+			builder.WriteString("## 📋 Resultado do Scan IaC\n\n")
+
+			for iacType, paths := range iacResults {
+				builder.WriteString(fmt.Sprintf("### %s (%d arquivo(s))\n", iacType, len(paths)))
+				for _, p := range paths {
+					builder.WriteString(fmt.Sprintf("- %s\n", p))
+				}
+				builder.WriteString("\n")
+			}
+
+			fmt.Println(builder.String())
+			return
+
+		default:
+			fmt.Println("✅ Resultado do Scan:")
+			for iacType, paths := range iacResults {
+				fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
+				for _, p := range paths {
+					fmt.Printf("    • %s\n", p)
+				}
 			}
 		}
 	},
@@ -85,7 +100,7 @@ var scanCmd = &cobra.Command{
 func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
 	scanCmd.Flags().StringVarP(&filterTypes, "filter", "f", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
-	scanCmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Formato da saída (ex: json)")
+	scanCmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Formato da saída (json, markdown)")
 	rootCmd.AddCommand(scanCmd)
 }
 
