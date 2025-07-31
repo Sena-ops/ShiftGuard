@@ -1,6 +1,7 @@
 ﻿package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,12 @@ import (
 
 var recursive bool
 var filterTypes string
+var outputFormat string
+
+type ScanResult struct {
+	Type  string   `json:"type"`
+	Files []string `json:"files"`
+}
 
 var scanCmd = &cobra.Command{
 	Use:   "scan [caminho]",
@@ -26,7 +33,6 @@ var scanCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Tipos permitidos pelo filtro (se especificado)
 		allowedTypes := map[string]bool{}
 		if filterTypes != "" {
 			for _, t := range splitAndTrim(filterTypes) {
@@ -34,7 +40,6 @@ var scanCmd = &cobra.Command{
 			}
 		}
 
-		// Agrupar arquivos por tipo
 		iacResults := map[string][]string{}
 		for _, f := range files {
 			iacType := string(f.Type)
@@ -46,6 +51,27 @@ var scanCmd = &cobra.Command{
 			iacResults[iacType] = append(iacResults[iacType], f.Path)
 		}
 
+		// Verifica formato de saída
+		if strings.ToLower(outputFormat) == "json" {
+			var jsonResults []ScanResult
+			for iacType, paths := range iacResults {
+				jsonResults = append(jsonResults, ScanResult{
+					Type:  iacType,
+					Files: paths,
+				})
+			}
+
+			encoded, err := json.MarshalIndent(jsonResults, "", "  ")
+			if err != nil {
+				fmt.Println("Erro ao gerar JSON:", err)
+				os.Exit(1)
+			}
+
+			fmt.Println(string(encoded))
+			return
+		}
+
+		// Saída padrão no terminal
 		fmt.Println("✅ Resultado do Scan:")
 		for iacType, paths := range iacResults {
 			fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
@@ -59,6 +85,7 @@ var scanCmd = &cobra.Command{
 func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
 	scanCmd.Flags().StringVarP(&filterTypes, "filter", "f", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
+	scanCmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Formato da saída (ex: json)")
 	rootCmd.AddCommand(scanCmd)
 }
 
