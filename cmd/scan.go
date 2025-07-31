@@ -8,18 +8,21 @@ import (
 
 	"github.com/Sena-ops/shiftguard/internal/parser"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var recursive bool
 var filterTypes string
 var outputFormat string
+var debugMode bool
+var logger *zap.SugaredLogger
 
 type ScanResult struct {
 	Type  string   `json:"type"`
 	Files []string `json:"files"`
 }
 
-// SARIF v2.1.0 structures (mínimo necessário)
+// SARIF structs (resumidos para clareza)
 type SarifLog struct {
 	Version string     `json:"version"`
 	Schema  string     `json:"$schema"`
@@ -72,12 +75,29 @@ var scanCmd = &cobra.Command{
 	Short: "Escaneia um diretório em busca de arquivos IaC",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Inicia o logger
+		var logConfig zap.Config
+		if debugMode {
+			logConfig = zap.NewDevelopmentConfig()
+		} else {
+			logConfig = zap.NewProductionConfig()
+			logConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		}
+		logConfig.Encoding = "console"
+		rawLogger, err := logConfig.Build()
+		if err != nil {
+			fmt.Println("Erro ao iniciar logger:", err)
+			os.Exit(1)
+		}
+		defer rawLogger.Sync()
+		logger = rawLogger.Sugar()
+
 		path := args[0]
-		fmt.Printf("🔍 Escaneando diretório: %s (recursivo: %v)\n\n", path, recursive)
+		logger.Infof("Escaneando diretório: %s (recursivo: %v)", path, recursive)
 
 		files, err := parser.DetectIaCFiles(path, recursive)
 		if err != nil {
-			fmt.Println("Erro ao escanear:", err)
+			logger.Errorw("Erro ao escanear", "erro", err)
 			os.Exit(1)
 		}
 
@@ -86,6 +106,7 @@ var scanCmd = &cobra.Command{
 			for _, t := range splitAndTrim(filterTypes) {
 				allowedTypes[t] = true
 			}
+			logger.Debugf("Tipos filtrados: %v", allowedTypes)
 		}
 
 		iacResults := map[string][]string{}
@@ -108,7 +129,7 @@ var scanCmd = &cobra.Command{
 			}
 			encoded, err := json.MarshalIndent(jsonResults, "", "  ")
 			if err != nil {
-				fmt.Println("Erro ao gerar JSON:", err)
+				logger.Errorw("Erro ao gerar JSON", "erro", err)
 				os.Exit(1)
 			}
 			fmt.Println(string(encoded))
@@ -170,14 +191,14 @@ var scanCmd = &cobra.Command{
 
 			encoded, err := json.MarshalIndent(sarif, "", "  ")
 			if err != nil {
-				fmt.Println("Erro ao gerar SARIF:", err)
+				logger.Errorw("Erro ao gerar SARIF", "erro", err)
 				os.Exit(1)
 			}
 			fmt.Println(string(encoded))
 			return
 
 		default:
-			fmt.Println("✅ Resultado do Scan:")
+			logger.Infof("✅ Resultado do Scan:")
 			for iacType, paths := range iacResults {
 				fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
 				for _, p := range paths {
@@ -192,6 +213,7 @@ func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
 	scanCmd.Flags().StringVarP(&filterTypes, "filter", "f", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
 	scanCmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Formato da saída (json, markdown, sarif)")
+	scanCmd.Flags().BoolVar(&debugMode, "debug", false, "Habilita logs em nível debug")
 	rootCmd.AddCommand(scanCmd)
 }
 
