@@ -10,7 +10,7 @@ import (
 )
 
 var recursive bool
-var onlyTypes string
+var filterTypes string
 
 var scanCmd = &cobra.Command{
 	Use:   "scan [caminho]",
@@ -26,10 +26,10 @@ var scanCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Filtrar tipos permitidos, se --only for usado
+		// Tipos permitidos pelo filtro (se especificado)
 		allowedTypes := map[string]bool{}
-		if onlyTypes != "" {
-			for _, t := range splitAndTrim(onlyTypes) {
+		if filterTypes != "" {
+			for _, t := range splitAndTrim(filterTypes) {
 				allowedTypes[t] = true
 			}
 		}
@@ -58,7 +58,7 @@ var scanCmd = &cobra.Command{
 
 func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
-	scanCmd.Flags().StringVarP(&onlyTypes, "only", "o", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
+	scanCmd.Flags().StringVarP(&filterTypes, "filter", "f", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
 	rootCmd.AddCommand(scanCmd)
 }
 
