@@ -3,12 +3,14 @@
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Sena-ops/shiftguard/internal/parser"
 	"github.com/spf13/cobra"
 )
 
 var recursive bool
+var onlyTypes string
 
 var scanCmd = &cobra.Command{
 	Use:   "scan [caminho]",
@@ -24,10 +26,24 @@ var scanCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Filtrar tipos permitidos, se --only for usado
+		allowedTypes := map[string]bool{}
+		if onlyTypes != "" {
+			for _, t := range splitAndTrim(onlyTypes) {
+				allowedTypes[t] = true
+			}
+		}
+
 		// Agrupar arquivos por tipo
 		iacResults := map[string][]string{}
 		for _, f := range files {
-			iacResults[string(f.Type)] = append(iacResults[string(f.Type)], f.Path)
+			iacType := string(f.Type)
+
+			if len(allowedTypes) > 0 && !allowedTypes[iacType] {
+				continue
+			}
+
+			iacResults[iacType] = append(iacResults[iacType], f.Path)
 		}
 
 		fmt.Println("✅ Resultado do Scan:")
@@ -42,5 +58,17 @@ var scanCmd = &cobra.Command{
 
 func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
+	scanCmd.Flags().StringVarP(&onlyTypes, "only", "o", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
 	rootCmd.AddCommand(scanCmd)
+}
+
+func splitAndTrim(s string) []string {
+	var result []string
+	for _, part := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(strings.ToLower(part))
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
