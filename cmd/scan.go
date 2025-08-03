@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sena-ops/shiftguard/internal/parser"
+	"github.com/Sena-ops/shiftguard/internal/scanner"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -15,6 +16,8 @@ var recursive bool
 var filterTypes string
 var outputFormat string
 var debugMode bool
+var whichScanner string
+
 var logger *zap.SugaredLogger
 
 type ScanResult struct {
@@ -22,50 +25,41 @@ type ScanResult struct {
 	Files []string `json:"files"`
 }
 
-// SARIF structs (resumidos para clareza)
+// SARIF structs (resumidos)
 type SarifLog struct {
 	Version string     `json:"version"`
 	Schema  string     `json:"$schema"`
 	Runs    []SarifRun `json:"runs"`
 }
-
 type SarifRun struct {
 	Tool    SarifTool     `json:"tool"`
 	Results []SarifResult `json:"results"`
 }
-
 type SarifTool struct {
 	Driver SarifDriver `json:"driver"`
 }
-
 type SarifDriver struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
-
 type SarifResult struct {
 	RuleID    string          `json:"ruleId"`
 	Message   SarifMessage    `json:"message"`
 	Locations []SarifLocation `json:"locations"`
 }
-
 type SarifMessage struct {
 	Text string `json:"text"`
 }
-
 type SarifLocation struct {
 	PhysicalLocation SarifPhysicalLocation `json:"physicalLocation"`
 }
-
 type SarifPhysicalLocation struct {
 	ArtifactLocation SarifArtifactLocation `json:"artifactLocation"`
 	Region           SarifRegion           `json:"region"`
 }
-
 type SarifArtifactLocation struct {
 	URI string `json:"uri"`
 }
-
 type SarifRegion struct {
 	StartLine int `json:"startLine"`
 }
@@ -75,7 +69,7 @@ var scanCmd = &cobra.Command{
 	Short: "Escaneia um diretório em busca de arquivos IaC",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Inicia o logger
+		// Inicializa logger
 		var logConfig zap.Config
 		if debugMode {
 			logConfig = zap.NewDevelopmentConfig()
@@ -196,16 +190,45 @@ var scanCmd = &cobra.Command{
 			}
 			fmt.Println(string(encoded))
 			return
+		}
 
-		default:
-			logger.Infof("✅ Resultado do Scan:")
-			for iacType, paths := range iacResults {
-				fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
-				for _, p := range paths {
-					fmt.Printf("    • %s\n", p)
-				}
+		// Saída padrão terminal
+		logger.Infof("✅ Resultado do Scan:")
+		for iacType, paths := range iacResults {
+			fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
+			for _, p := range paths {
+				fmt.Printf("    • %s\n", p)
 			}
 		}
+
+		// Execução Trivy
+		if whichScanner != "" {
+			logger.Infof("Executando scanner: %s...", whichScanner)
+
+			if whichScanner == "trivy" {
+				err := os.MkdirAll(".shiftguard", 0755)
+				if err != nil {
+					logger.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
+					os.Exit(1)
+				}
+
+				output, err := scanner.RunTrivy(path)
+				if err != nil {
+					logger.Errorw("Erro ao executar Trivy", "erro", err)
+				} else {
+					outputPath := ".shiftguard/trivy-results.json"
+					err := os.WriteFile(outputPath, output, 0644)
+					if err != nil {
+						logger.Errorw("Erro ao salvar resultados do Trivy", "erro", err)
+					} else {
+						logger.Infow("Resultado do Trivy salvo com sucesso", "arquivo", outputPath)
+					}
+				}
+			} else {
+				logger.Warnw("Scanner não suportado ainda", "scanner", whichScanner)
+			}
+		}
+
 	},
 }
 
@@ -213,6 +236,7 @@ func init() {
 	scanCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Escaneia diretórios recursivamente")
 	scanCmd.Flags().StringVarP(&filterTypes, "filter", "f", "", "Filtra os tipos IaC desejados (ex: terraform,kubernetes)")
 	scanCmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Formato da saída (json, markdown, sarif)")
+	scanCmd.Flags().StringVarP(&whichScanner, "with", "w", "", "Executa scanner específico (ex: trivy, kics, semgrep)")
 	scanCmd.Flags().BoolVar(&debugMode, "debug", false, "Habilita logs em nível debug")
 	rootCmd.AddCommand(scanCmd)
 }
