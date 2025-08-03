@@ -201,31 +201,26 @@ var scanCmd = &cobra.Command{
 			}
 		}
 
-		// Execução Trivy
+		// Execução Scaner
 		if whichScanner != "" {
 			logger.Infof("Executando scanner: %s...", whichScanner)
 
-			if whichScanner == "trivy" {
-				err := os.MkdirAll(".shiftguard", 0755)
-				if err != nil {
-					logger.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
-					os.Exit(1)
-				}
+			err := os.MkdirAll(".shiftguard", 0755)
+			if err != nil {
+				logger.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
+				os.Exit(1)
+			}
 
-				output, err := scanner.RunTrivy(path)
-				if err != nil {
-					logger.Errorw("Erro ao executar Trivy", "erro", err)
-				} else {
-					outputPath := ".shiftguard/trivy-results.json"
-					err := os.WriteFile(outputPath, output, 0644)
-					if err != nil {
-						logger.Errorw("Erro ao salvar resultados do Trivy", "erro", err)
-					} else {
-						logger.Infow("Resultado do Trivy salvo com sucesso", "arquivo", outputPath)
-					}
-				}
+			output, outputPath, err := scanner.Execute(whichScanner, []string{path})
+			if err != nil {
+				logger.Errorw("Erro ao executar scanner", "erro", err)
 			} else {
-				logger.Warnw("Scanner não suportado ainda", "scanner", whichScanner)
+				err := os.WriteFile(outputPath, output, 0644)
+				if err != nil {
+					logger.Errorw("Erro ao salvar resultados", "erro", err)
+				} else {
+					logger.Infow("Resultado salvo com sucesso", "scanner", whichScanner, "arquivo", outputPath)
+				}
 			}
 		}
 
