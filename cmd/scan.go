@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Sena-ops/shiftguard/internal/logging"
 	"github.com/Sena-ops/shiftguard/internal/parser"
 	"github.com/Sena-ops/shiftguard/internal/scanner"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 var recursive bool
@@ -17,8 +17,6 @@ var filterTypes string
 var outputFormat string
 var debugMode bool
 var whichScanner string
-
-var logger *zap.SugaredLogger
 
 type ScanResult struct {
 	Type  string   `json:"type"`
@@ -69,29 +67,16 @@ var scanCmd = &cobra.Command{
 	Short: "Escaneia um diretório em busca de arquivos IaC",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Inicializa logger
-		var logConfig zap.Config
-		if debugMode {
-			logConfig = zap.NewDevelopmentConfig()
-		} else {
-			logConfig = zap.NewProductionConfig()
-			logConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
-		}
-		logConfig.Encoding = "console"
-		rawLogger, err := logConfig.Build()
-		if err != nil {
-			fmt.Println("Erro ao iniciar logger:", err)
-			os.Exit(1)
-		}
-		defer rawLogger.Sync()
-		logger = rawLogger.Sugar()
+		logging.InitLogger(debugMode)
+		log := logging.Logger
 
+		log.Debug("🛠️ Modo debug ativado!")
 		path := args[0]
-		logger.Infof("Escaneando diretório: %s (recursivo: %v)", path, recursive)
+		log.Infof("Escaneando diretório: %s (recursivo: %v)", path, recursive)
 
 		files, err := parser.DetectIaCFiles(path, recursive)
 		if err != nil {
-			logger.Errorw("Erro ao escanear", "erro", err)
+			log.Errorw("Erro ao escanear", "erro", err)
 			os.Exit(1)
 		}
 
@@ -100,7 +85,7 @@ var scanCmd = &cobra.Command{
 			for _, t := range splitAndTrim(filterTypes) {
 				allowedTypes[t] = true
 			}
-			logger.Debugf("Tipos filtrados: %v", allowedTypes)
+			log.Debugf("Tipos filtrados: %v", allowedTypes)
 		}
 
 		iacResults := map[string][]string{}
@@ -123,7 +108,7 @@ var scanCmd = &cobra.Command{
 			}
 			encoded, err := json.MarshalIndent(jsonResults, "", "  ")
 			if err != nil {
-				logger.Errorw("Erro ao gerar JSON", "erro", err)
+				log.Errorw("Erro ao gerar JSON", "erro", err)
 				os.Exit(1)
 			}
 			fmt.Println(string(encoded))
@@ -185,7 +170,7 @@ var scanCmd = &cobra.Command{
 
 			encoded, err := json.MarshalIndent(sarif, "", "  ")
 			if err != nil {
-				logger.Errorw("Erro ao gerar SARIF", "erro", err)
+				log.Errorw("Erro ao gerar SARIF", "erro", err)
 				os.Exit(1)
 			}
 			fmt.Println(string(encoded))
@@ -193,7 +178,7 @@ var scanCmd = &cobra.Command{
 		}
 
 		// Saída padrão terminal
-		logger.Infof("✅ Resultado do Scan:")
+		log.Infof("✅ Resultado do Scan:")
 		for iacType, paths := range iacResults {
 			fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
 			for _, p := range paths {
@@ -203,27 +188,26 @@ var scanCmd = &cobra.Command{
 
 		// Execução Scaner
 		if whichScanner != "" {
-			logger.Infof("Executando scanner: %s...", whichScanner)
+			log.Infof("Executando scanner: %s...", whichScanner)
 
 			err := os.MkdirAll(".shiftguard", 0755)
 			if err != nil {
-				logger.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
+				log.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
 				os.Exit(1)
 			}
 
 			output, outputPath, err := scanner.Execute(whichScanner, []string{path})
 			if err != nil {
-				logger.Errorw("Erro ao executar scanner", "erro", err)
+				log.Errorw("Erro ao executar scanner", "erro", err)
 			} else {
 				err := os.WriteFile(outputPath, output, 0644)
 				if err != nil {
-					logger.Errorw("Erro ao salvar resultados", "erro", err)
+					log.Errorw("Erro ao salvar resultados", "erro", err)
 				} else {
-					logger.Infow("Resultado salvo com sucesso", "scanner", whichScanner, "arquivo", outputPath)
+					log.Infow("Resultado salvo com sucesso", "scanner", whichScanner, "arquivo", outputPath)
 				}
 			}
 		}
-
 	},
 }
 
