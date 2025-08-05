@@ -13,7 +13,8 @@ var scanners = map[string]ScannerFunc{
 		}
 		return RunTrivy(paths[0])
 	},
-	"kics": RunKICS,
+	"kics":    RunKICS,
+	"semgrep": RunSemgrep,
 }
 
 func Execute(scannerName string, paths []string) ([]byte, string, error) {
