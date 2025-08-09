@@ -3,12 +3,18 @@
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/Sena-ops/shiftguard/internal/adapters"
 	"github.com/Sena-ops/shiftguard/internal/logging"
+	"github.com/Sena-ops/shiftguard/internal/model"
 	"github.com/Sena-ops/shiftguard/internal/parser"
 	"github.com/Sena-ops/shiftguard/internal/scanner"
+	sarif "github.com/Sena-ops/shiftguard/internal/sarif"
 	"github.com/spf13/cobra"
 )
 
@@ -23,45 +29,6 @@ type ScanResult struct {
 	Files []string `json:"files"`
 }
 
-// SARIF structs (resumidos)
-type SarifLog struct {
-	Version string     `json:"version"`
-	Schema  string     `json:"$schema"`
-	Runs    []SarifRun `json:"runs"`
-}
-type SarifRun struct {
-	Tool    SarifTool     `json:"tool"`
-	Results []SarifResult `json:"results"`
-}
-type SarifTool struct {
-	Driver SarifDriver `json:"driver"`
-}
-type SarifDriver struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-type SarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Message   SarifMessage    `json:"message"`
-	Locations []SarifLocation `json:"locations"`
-}
-type SarifMessage struct {
-	Text string `json:"text"`
-}
-type SarifLocation struct {
-	PhysicalLocation SarifPhysicalLocation `json:"physicalLocation"`
-}
-type SarifPhysicalLocation struct {
-	ArtifactLocation SarifArtifactLocation `json:"artifactLocation"`
-	Region           SarifRegion           `json:"region"`
-}
-type SarifArtifactLocation struct {
-	URI string `json:"uri"`
-}
-type SarifRegion struct {
-	StartLine int `json:"startLine"`
-}
-
 var scanCmd = &cobra.Command{
 	Use:   "scan [caminho]",
 	Short: "Escaneia um diretório em busca de arquivos IaC",
@@ -70,142 +37,192 @@ var scanCmd = &cobra.Command{
 		logging.InitLogger(debugMode)
 		log := logging.Logger
 
-		log.Debug("🛠️ Modo debug ativado!")
 		path := args[0]
-		log.Infof("Escaneando diretório: %s (recursivo: %v)", path, recursive)
-
 		files, err := parser.DetectIaCFiles(path, recursive)
 		if err != nil {
 			log.Errorw("Erro ao escanear", "erro", err)
 			os.Exit(1)
 		}
 
-		allowedTypes := map[string]bool{}
+		// Filtro por tipo, se fornecido
+		allowed := map[string]bool{}
 		if filterTypes != "" {
 			for _, t := range splitAndTrim(filterTypes) {
-				allowedTypes[t] = true
+				allowed[t] = true
 			}
-			log.Debugf("Tipos filtrados: %v", allowedTypes)
 		}
 
+		// Monta o mapa de resultados (tipo -> paths)
 		iacResults := map[string][]string{}
 		for _, f := range files {
-			iacType := string(f.Type)
-			if len(allowedTypes) > 0 && !allowedTypes[iacType] {
+			tp := string(f.Type)
+			if len(allowed) > 0 && !allowed[tp] {
 				continue
 			}
-			iacResults[iacType] = append(iacResults[iacType], f.Path)
+			iacResults[tp] = append(iacResults[tp], f.Path)
 		}
+
+		// === LISTAGEM SEMPRE ===
+		fmt.Println("✅ Resultado do Scan:")
+		if len(iacResults) == 0 {
+			fmt.Println("  (nenhum arquivo IaC detectado)")
+		} else {
+			for tp, paths := range iacResults {
+				fmt.Printf("- %s: %d arquivo(s)\n", tp, len(paths))
+				for _, p := range paths {
+					fmt.Printf("    • %s\n", p)
+				}
+			}
+		}
+		fmt.Println()
+		// =======================
 
 		switch strings.ToLower(outputFormat) {
 		case "json":
-			var jsonResults []ScanResult
-			for iacType, paths := range iacResults {
-				jsonResults = append(jsonResults, ScanResult{
-					Type:  iacType,
-					Files: paths,
-				})
+			var out []ScanResult
+			for tp, paths := range iacResults {
+				out = append(out, ScanResult{Type: tp, Files: paths})
 			}
-			encoded, err := json.MarshalIndent(jsonResults, "", "  ")
+			b, err := json.MarshalIndent(out, "", "  ")
 			if err != nil {
 				log.Errorw("Erro ao gerar JSON", "erro", err)
 				os.Exit(1)
 			}
-			fmt.Println(string(encoded))
+			fmt.Println(string(b))
 			return
 
 		case "markdown":
-			var builder strings.Builder
-			builder.WriteString("## 📋 Resultado do Scan IaC\n\n")
-			for iacType, paths := range iacResults {
-				builder.WriteString(fmt.Sprintf("### %s (%d arquivo(s))\n", iacType, len(paths)))
+			var b strings.Builder
+			b.WriteString("## 📋 Resultado do Scan IaC\n\n")
+			for tp, paths := range iacResults {
+				b.WriteString(fmt.Sprintf("### %s (%d arquivo(s))\n", tp, len(paths)))
 				for _, p := range paths {
-					builder.WriteString(fmt.Sprintf("- %s\n", p))
+					b.WriteString(fmt.Sprintf("- %s\n", p))
 				}
-				builder.WriteString("\n")
+				b.WriteString("\n")
 			}
-			fmt.Println(builder.String())
+			fmt.Println(b.String())
 			return
 
 		case "sarif":
-			var results []SarifResult
-			for iacType, paths := range iacResults {
-				for _, p := range paths {
-					results = append(results, SarifResult{
-						RuleID: iacType,
-						Message: SarifMessage{
-							Text: fmt.Sprintf("Arquivo %s detectado", iacType),
-						},
-						Locations: []SarifLocation{
-							{
-								PhysicalLocation: SarifPhysicalLocation{
-									ArtifactLocation: SarifArtifactLocation{
-										URI: p,
-									},
-									Region: SarifRegion{
-										StartLine: 1,
-									},
-								},
-							},
-						},
-					})
+			var findings []model.Finding
+			fileBase := "shiftguard"
+			toolName := "ShiftGuard"
+
+			if whichScanner != "" {
+				scn := strings.ToLower(whichScanner)
+				fileBase = scn
+				toolName = strings.ToUpper(scn)
+
+				out, _, err := scanner.Execute(scn, []string{path})
+				if err != nil && len(out) == 0 {
+					// Alguns scanners (ex.: KICS) podem não escrever no stdout
+					log.Warnw("Scanner retornou erro ou stdout vazio; tentando arquivo de resultados", "scanner", scn, "erro", err)
+				}
+
+				// 1) Tenta parsear o stdout
+				switch scn {
+				case "kics":
+					if len(out) > 0 {
+						if parsed, e := adapters.ParseKICSBytes(out); e == nil {
+							findings = parsed
+						}
+					}
+				case "trivy":
+					if len(out) > 0 {
+						if parsed, e := adapters.ParseTrivyBytes(out); e == nil {
+							findings = parsed
+						}
+					}
+				case "semgrep":
+					if len(out) > 0 {
+						if parsed, e := adapters.ParseSemgrepBytes(out); e == nil {
+							findings = parsed
+						}
+					}
+				default:
+					log.Warnw("Scanner não suportado", "scanner", scn)
+				}
+
+				// 2) Fallback: procurar JSON salvo em pastas conhecidas
+				if len(findings) == 0 {
+					if p := findFirstJSONMulti(
+						filepath.Join(".shiftguard", "results"),
+						filepath.Join(".shiftguard", "kics-results"),
+						filepath.Join(".shiftguard", "trivy-results"),
+						filepath.Join(".shiftguard", "semgrep-results"),
+						".shiftguard",
+					); p != "" {
+						log.Infow("Usando JSON de arquivo (fallback)", "path", p)
+						switch scn {
+						case "kics":
+							if parsed, e := adapters.ParseKICSFile(p); e == nil {
+								findings = parsed
+							}
+						case "trivy":
+							if parsed, e := adapters.ParseTrivyFile(p); e == nil {
+								findings = parsed
+							}
+						case "semgrep":
+							if parsed, e := adapters.ParseSemgrepFile(p); e == nil {
+								findings = parsed
+							}
+						}
+					}
+				}
+
+				// 3) Fallback específico do KICS: detectar por conteúdo
+				if len(findings) == 0 && scn == "kics" {
+					if p := findKICSJSONByContent(".shiftguard"); p != "" {
+						log.Infow("Detectado JSON do KICS pelo conteúdo", "path", p)
+						if parsed, e := adapters.ParseKICSFile(p); e == nil {
+							findings = parsed
+						} else {
+							log.Warnw("Falha ao parsear JSON KICS", "erro", e)
+						}
+					}
 				}
 			}
 
-			sarif := SarifLog{
-				Version: "2.1.0",
-				Schema:  "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json",
-				Runs: []SarifRun{
-					{
-						Tool: SarifTool{
-							Driver: SarifDriver{
-								Name:    "ShiftGuard",
-								Version: "0.1.0",
-							},
-						},
-						Results: results,
-					},
-				},
+			// 4) Fallback total: se ainda não há findings, cria um por arquivo detectado
+			if len(findings) == 0 {
+				for tp, paths := range iacResults {
+					for _, p := range paths {
+						findings = append(findings, model.Finding{
+							ToolName:  "shiftguard",
+							RuleID:    tp,
+							RuleName:  tp,
+							Severity:  model.SevInfo,
+							Message:   "Arquivo detectado",
+							FilePath:  p,
+							StartLine: 1,
+						})
+					}
+				}
 			}
 
-			encoded, err := json.MarshalIndent(sarif, "", "  ")
+			// Exporta SARIF
+			_ = os.MkdirAll(".shiftguard", 0o755)
+			sarif.SortFindings(findings)
+			outPath, err := sarif.Export(findings, ".shiftguard", fileBase, toolName, "0.1.0")
 			if err != nil {
-				log.Errorw("Erro ao gerar SARIF", "erro", err)
+				log.Errorw("Erro ao exportar SARIF", "erro", err)
 				os.Exit(1)
 			}
-			fmt.Println(string(encoded))
+			fmt.Println("📦 SARIF salvo em:", outPath)
 			return
 		}
 
-		// Saída padrão terminal
-		log.Infof("✅ Resultado do Scan:")
-		for iacType, paths := range iacResults {
-			fmt.Printf("- %s: %d arquivo(s)\n", iacType, len(paths))
-			for _, p := range paths {
-				fmt.Printf("    • %s\n", p)
-			}
-		}
-
-		// Execução Scaner
-		if whichScanner != "" {
+		// Execução opcional do scanner quando não é -o (apenas para salvar saída bruta)
+		if whichScanner != "" && strings.ToLower(outputFormat) == "" {
 			log.Infof("Executando scanner: %s...", whichScanner)
-
-			err := os.MkdirAll(".shiftguard", 0755)
-			if err != nil {
-				log.Errorw("Erro ao criar diretório .shiftguard", "erro", err)
-				os.Exit(1)
-			}
-
-			output, outputPath, err := scanner.Execute(whichScanner, []string{path})
+			out, outPath, err := scanner.Execute(whichScanner, []string{path})
 			if err != nil {
 				log.Errorw("Erro ao executar scanner", "erro", err)
+			} else if err := os.WriteFile(outPath, out, 0o644); err != nil {
+				log.Errorw("Erro ao salvar resultados", "erro", err)
 			} else {
-				err := os.WriteFile(outputPath, output, 0644)
-				if err != nil {
-					log.Errorw("Erro ao salvar resultados", "erro", err)
-				} else {
-					log.Infow("Resultado salvo com sucesso", "scanner", whichScanner, "arquivo", outputPath)
-				}
+				log.Infow("Resultado salvo com sucesso", "scanner", whichScanner, "arquivo", outPath)
 			}
 		}
 	},
@@ -221,12 +238,99 @@ func init() {
 }
 
 func splitAndTrim(s string) []string {
-	var result []string
-	for _, part := range strings.Split(s, ",") {
-		trimmed := strings.TrimSpace(strings.ToLower(part))
-		if trimmed != "" {
-			result = append(result, trimmed)
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(strings.ToLower(p)); t != "" {
+			out = append(out, t)
 		}
 	}
-	return result
+	return out
+}
+
+// ---------- Helpers de fallback de resultados (.json) ----------
+
+func findFirstJSONMulti(dirs ...string) string {
+	for _, d := range dirs {
+		if p := findFirstJSON(d); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func findFirstJSON(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			if p := findFirstJSON(filepath.Join(dir, e.Name())); p != "" {
+				if info, _ := os.Stat(p); info != nil && info.ModTime().After(bestMod) {
+					bestMod = info.ModTime()
+					best = p
+				}
+			}
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if info, err := os.Stat(p); err == nil && info.ModTime().After(bestMod) {
+			bestMod = info.ModTime()
+			best = p
+		}
+	}
+	return best
+}
+
+// Varre .shiftguard e detecta JSON do KICS pelo conteúdo (kics_version/queries)
+func findKICSJSONByContent(root string) string {
+	var best string
+	var bestMod time.Time
+
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e != nil || len(b) == 0 {
+			return nil
+		}
+		if isKICSJSON(b) {
+			if info, e := os.Stat(p); e == nil && info.ModTime().After(bestMod) {
+				bestMod = info.ModTime()
+				best = p
+			}
+		}
+		return nil
+	})
+	return best
+}
+
+func isKICSJSON(b []byte) bool {
+	// heurística leve
+	s := strings.ToLower(string(b))
+	if strings.Contains(s, "\"kics_version\"") {
+		return true
+	}
+	// presença de queries/Queries
+	type probe struct {
+		Queries any `json:"queries"`
+	}
+	var p probe
+	if json.Unmarshal(b, &p) == nil && p.Queries != nil {
+		return true
+	}
+	type probeUp struct {
+		Queries any `json:"Queries"`
+	}
+	var u probeUp
+	return json.Unmarshal(b, &u) == nil && u.Queries != nil
 }
